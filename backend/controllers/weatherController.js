@@ -1,7 +1,6 @@
-const pool = require('../config/db');
+const SearchHistory = require('../models/SearchHistory');
 const weatherService = require('../services/weatherService');
 
-// Resolve a location query (city, "city,country", zip, or "lat,lon") to coordinates.
 async function resolveLocation({ city, zip, lat, lon, country }) {
   if (lat && lon) {
     return { lat: Number(lat), lon: Number(lon), name: city || 'Selected location', country: country || '' };
@@ -38,26 +37,18 @@ async function getCurrent(req, res, next) {
     ]);
 
     if (req.user) {
-      await pool.query(
-        `INSERT INTO search_history (user_id, city_name, country, temperature, condition)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          req.user.id,
-          location.name,
-          location.country,
-          current.main?.temp ?? null,
-          current.weather?.[0]?.main ?? null,
-        ]
-      );
+      await SearchHistory.create({
+        userId: req.user.id,
+        cityName: location.name,
+        country: location.country,
+        temperature: current.main?.temp ?? null,
+        condition: current.weather?.[0]?.main ?? null,
+      });
     }
 
     res.json({
       success: true,
-      data: {
-        location,
-        current,
-        airQuality: air,
-      },
+      data: { location, current, airQuality: air },
     });
   } catch (err) {
     next(err);
@@ -72,7 +63,7 @@ async function getForecast(req, res, next) {
     const location = await resolveLocation({ city, zip, lat, lon, country });
     const forecast = await weatherService.getForecast(location.lat, location.lon, unitParam);
 
-    const hourly = forecast.list.slice(0, 8); // next 24h (8 x 3h slices)
+    const hourly = forecast.list.slice(0, 8);
 
     const dailyMap = new Map();
     forecast.list.forEach((slice) => {
@@ -101,13 +92,8 @@ async function getForecast(req, res, next) {
 
 async function getHistory(req, res, next) {
   try {
-    const result = await pool.query(
-      `SELECT id, city_name, country, temperature, condition, searched_at
-       FROM search_history WHERE user_id = $1
-       ORDER BY searched_at DESC LIMIT 50`,
-      [req.user.id]
-    );
-    res.json({ success: true, data: result.rows });
+    const rows = await SearchHistory.findByUser(req.user.id, 50);
+    res.json({ success: true, data: rows });
   } catch (err) {
     next(err);
   }
